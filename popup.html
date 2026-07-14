@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Senkuro Tracker</title>
+    <style>
+        body { width: 440px; height: 600px; max-height: 600px; font-family: 'Segoe UI', Tahoma, Geneva, sans-serif; padding: 10px; background: #1e1e2e; color: #cdd6f4; margin: 0; overflow: hidden; display: flex; flex-direction: column;}
+        * { box-sizing: border-box; }
+
+        .header-btn { width: 100%; flex-shrink: 0; background: transparent; color: #cba6f7; padding: 8px 12px; border: 1px solid #cba6f7; border-radius: 6px; font-weight: 600; cursor: pointer; margin-bottom: 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; transition: all 0.2s ease;}
+        .header-btn:hover { background: #cba6f7; color: #11111b; box-shadow: 0 0 10px rgba(203, 166, 247, 0.3); }
+
+        .tabs { display: flex; flex-shrink: 0; border-bottom: 2px solid #313244; margin-bottom: 8px; }
+        .tab-btn { flex: 1; background: none; border: none; color: #a6adc8; padding: 6px; cursor: pointer; font-weight: 600; font-size: 11px; text-transform: uppercase;}
+        .tab-btn.active { color: #89b4fa; border-bottom: 2px solid #89b4fa; margin-bottom: -2px; }
+
+        .view-container { display: none; flex-grow: 1; flex-direction: column; overflow: hidden; }
+        .view-container.active { display: flex; }
+
+        .grid-container { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 8px; flex-grow: 1; min-height: 0;}
+        
+        .card { background: transparent; display: flex; flex-direction: column; overflow: hidden; border-radius: 6px; position: relative;}
+        
+        .card-link { text-decoration: none; color: inherit; display: flex; flex-direction: column; cursor: pointer; flex-grow: 1;}
+        .card-link:hover .card-cover-wrap { border-color: #89b4fa; }
+
+        .card-cover-wrap { position: relative; width: 100%; height: 102px; border-radius: 6px; overflow: hidden; margin-bottom: 4px; background: #313244; border: 1px solid transparent; transition: 0.2s;}
+        .card-cover { width: 100%; height: 100%; object-fit: cover; }
+        
+        .tag-top { position: absolute; top: 0; left: 0; background: rgba(203,166,247,0.9); color: #11111b; font-size: 9px; font-weight: bold; padding: 2px 5px; border-bottom-right-radius: 6px; }
+        .is-licensed .tag-top { background: rgba(243,139,168,0.9); }
+        .is-removed .tag-top { background: rgba(166,173,190,0.9); }
+        .is-removed .card-cover { filter: grayscale(0.7); }
+        .tag-bottom { position: absolute; bottom: 0; right: 0; background: rgba(30,30,46,0.85); color: #cdd6f4; font-size: 8px; padding: 2px 5px; border-top-left-radius: 6px; }
+
+        .card-title { font-size: 11px; font-weight: bold; color: #cdd6f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; margin: 2px 0 4px 0; cursor: help; padding: 0 2px;}
+        
+        .chapter-box { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 0 4px; flex-shrink: 0; margin-top: auto;}
+        .chapter-input { width: 100%; padding: 3px; background: #313244; color: #a6e3a1; border: 1px solid #45475a; border-radius: 4px; font-weight: bold; text-align: center; font-size: 10px;}
+        .chapter-input[readonly] { border-color: transparent; color: #bac2de; padding: 0; background: transparent;}
+        .save-btn { cursor: pointer; background: #89b4fa; border: none; padding: 3px 6px; border-radius: 4px; color: #1e1e2e; font-weight: bold; font-size: 10px; display: none;}
+        .is-licensed .save-btn { display: block; }
+        .is-licensed .chapter-input { width: 65%; }
+
+        /* КНОПКА УДАЛЕНИЯ ТАЙТЛА */
+        .delete-btn { position: absolute; top: 4px; right: 4px; background: rgba(30,30,46,0.9); color: #f38ba8; border: 1px solid #f38ba8; border-radius: 4px; width: 22px; height: 22px; font-weight: bold; font-size: 10px; cursor: pointer; display: none; z-index: 10; align-items: center; justify-content: center; padding: 0; transition: 0.2s;}
+        .card:hover .delete-btn { display: flex; }
+        .delete-btn:hover { background: #f38ba8; color: #11111b; }
+
+        .pagination { display: flex; justify-content: space-between; align-items: center; background: #313244; padding: 6px 10px; border-radius: 6px; margin-top: 8px; flex-shrink: 0;}
+        .page-btn { background: #45475a; border: none; color: white; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 11px;}
+        .page-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .page-info { font-size: 11px; font-weight: bold; color: #a6adc8;}
+
+        .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .stat-box { background: #313244; padding: 15px; border-radius: 8px; text-align: center; }
+        .stat-title { font-size: 11px; color: #a6adc8; margin-bottom: 5px; text-transform: uppercase; font-weight: bold;}
+        .stat-val { font-size: 24px; font-weight: bold; color: #cba6f7; }
+
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(17,17,27,0.95); z-index: 100; padding: 15px;}
+        .modal-content { background: #1e1e2e; border: 1px solid #45475a; border-radius: 8px; height: 100%; display: flex; flex-direction: column; overflow: hidden;}
+        .modal-view { display: none; flex-direction: column; height: 100%; padding: 15px;}
+        .modal-view.active { display: flex; }
+        .warning-text { text-align: center; font-size: 13px; line-height: 1.5; margin-top: 20px; color: #bac2de;}
+        .warning-text span { color: #f38ba8; font-weight: bold;}
+        
+        .sync-log-box { flex-grow: 1; background: #11111b; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 11px; color: #a6e3a1; display: flex; align-items: center; justify-content: center; text-align: center;}
+        
+        .diff-list { flex-grow: 1; overflow-y: auto; background: #11111b; padding: 10px; font-family: monospace; font-size: 11px; border-radius: 6px; margin-bottom: 10px;}
+        .diff-add { color: #a6e3a1; margin-bottom:4px;} .diff-mod { color: #89b4fa; margin-bottom:4px;} .diff-rm { color: #f38ba8; margin-bottom:4px;}
+        
+        .modal-footer { display: flex; gap: 10px; flex-shrink: 0;}
+        .btn-green { flex: 1; background: #a6e3a1; color: #11111b; border: none; padding: 8px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; text-transform: uppercase;}
+        .btn-red { flex: 1; background: #f38ba8; color: #11111b; border: none; padding: 8px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; text-transform: uppercase;}
+    </style>
+</head>
+<body>
+    <button id="scan-btn" class="header-btn">Синхронизировать библиотеку</button>
+
+    <div class="tabs">
+        <button data-tab="Читаю" class="tab-btn active">Читаю</button>
+        <button data-tab="В планах" class="tab-btn">В планах</button>
+        <button data-tab="Прочитано" class="tab-btn">Прочитано</button>
+        <button data-tab="Лицензии" class="tab-btn" style="color:#f38ba8;">Лицензии</button>
+        <button data-tab="Статистика" class="tab-btn">Статистика</button>
+    </div>
+
+    <!-- Сетка -->
+    <div id="view-grid" class="view-container active">
+        <div id="grid-container" class="grid-container"></div>
+        <div class="pagination">
+            <button id="prev-page" class="page-btn">НАЗАД</button>
+            <span id="page-info" class="page-info">1 / 1</span>
+            <button id="next-page" class="page-btn">ВПРЕД</button>
+        </div>
+    </div>
+
+    <!-- Статистика -->
+    <div id="view-stats" class="view-container" style="overflow-y:auto;">
+        <div class="stat-grid" id="stats-grid"></div>
+    </div>
+
+    <!-- Модалка -->
+    <div id="sync-modal" class="modal">
+        <div class="modal-content">
+            <div id="view-warning" class="modal-view active">
+                <h3 style="text-align:center; color:#cdd6f4; margin-top:0; text-transform: uppercase;">Системная синхронизация</h3>
+                <div class="warning-text">Процесс затронет ваши вкладки и потребует перезагрузки страницы.<br><br><span>Окно браузера будет моргать. Не взаимодействуйте со страницей до завершения сканирования.</span></div>
+                <div style="flex-grow:1;"></div>
+                <div class="modal-footer">
+                    <button id="btn-start-sync" class="btn-green">Начать сканирование</button>
+                    <button class="btn-red close-modal-btn">Отмена</button>
+                </div>
+            </div>
+            <div id="view-progress" class="modal-view">
+                <h3 style="text-align:center; margin-top:0; color: #cdd6f4; text-transform: uppercase;">Обработка данных</h3>
+                <div class="sync-log-box" id="sync-status-text">Подготовка интерфейса...</div>
+            </div>
+            <div id="view-diff" class="modal-view">
+                <h3 style="text-align:center; margin-top:0; margin-bottom: 10px; color: #cdd6f4; text-transform: uppercase;">Отчет об изменениях</h3>
+                <div id="diff-box" class="diff-list"></div>
+                <div class="modal-footer">
+                    <button id="btn-confirm-diff" class="btn-green">Сохранить данные</button>
+                    <button class="btn-red close-modal-btn">Отклонить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>
