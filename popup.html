@@ -2,130 +2,733 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Senkuro Tracker</title>
     <style>
-        body { width: 440px; height: 600px; max-height: 600px; font-family: 'Segoe UI', Tahoma, Geneva, sans-serif; padding: 10px; background: #1e1e2e; color: #cdd6f4; margin: 0; overflow: hidden; display: flex; flex-direction: column;}
+        :root {
+            color-scheme: dark;
+
+            --bg: #1e1e2e;
+            --bg-elevated: #313244;
+            --bg-input: #45475a;
+            --bg-log: #11111b;
+            --text: #cdd6f4;
+            --text-muted: #a6adc8;
+            --accent: #89b4fa;
+            --accent-purple: #cba6f7;
+            --green: #a6e3a1;
+            --red: #f38ba8;
+            --orange: #fab387;
+            --pink: #f5c2e7;
+            --border: #45475a;
+            --border-strong: #585b70;
+
+            /* Контраст к #1e1e2e — 3.38:1, к #11111b — 3.84:1 */
+            --scrollbar-thumb: #6c7086;
+            --scrollbar-track: #1e1e2e;
+
+            scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+        }
+
         * { box-sizing: border-box; }
 
-        .header-btn { width: 100%; flex-shrink: 0; background: transparent; color: #cba6f7; padding: 8px 12px; border: 1px solid #cba6f7; border-radius: 6px; font-weight: 600; cursor: pointer; margin-bottom: 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; transition: all 0.2s ease;}
-        .header-btn:hover { background: #cba6f7; color: #11111b; box-shadow: 0 0 10px rgba(203, 166, 247, 0.3); }
+        body {
+            width: 440px;
+            height: 600px;
+            max-height: 600px;
+            margin: 0;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', Tahoma, Geneva, sans-serif;
+        }
 
-        .tabs { display: flex; flex-shrink: 0; border-bottom: 2px solid #313244; margin-bottom: 8px; }
-        .tab-btn { flex: 1; background: none; border: none; color: #a6adc8; padding: 6px; cursor: pointer; font-weight: 600; font-size: 11px; text-transform: uppercase;}
-        .tab-btn.active { color: #89b4fa; border-bottom: 2px solid #89b4fa; margin-bottom: -2px; }
+        button, input { font-family: inherit; }
 
-        .view-container { display: none; flex-grow: 1; flex-direction: column; overflow: hidden; }
+        .visually-hidden:where(:not(:focus-within, :active)) {
+            position: absolute !important;
+            clip-path: inset(50%) !important;
+            overflow: hidden !important;
+            width: 1px !important;
+            height: 1px !important;
+            margin: -1px !important;
+            padding: 0 !important;
+            border: 0 !important;
+            white-space: nowrap !important;
+        }
+
+        :where(button, a, input):focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+
+        .app-header { flex-shrink: 0; }
+        .app-main { display: flex; flex-direction: column; flex-grow: 1; min-height: 0; }
+
+        .header-btn {
+            width: 100%;
+            background: transparent;
+            color: var(--accent-purple);
+            padding: 8px 12px;
+            border: 1px solid var(--accent-purple);
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 10px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            transition: background-color 0.2s, color 0.2s, box-shadow 0.2s;
+        }
+        .header-btn:hover {
+            background: var(--accent-purple);
+            color: #11111b;
+            box-shadow: 0 0 10px rgba(203, 166, 247, 0.3);
+        }
+
+        .status-message {
+            margin: 0 0 10px;
+            padding: 8px 10px;
+            border: 1px solid rgba(243, 139, 168, 0.45);
+            border-radius: 6px;
+            background: rgba(243, 139, 168, 0.12);
+            color: var(--red);
+            font-size: 11px;
+            line-height: 1.4;
+        }
+        .status-message[hidden] { display: none; }
+
+        .tabs {
+            display: flex;
+            flex-shrink: 0;
+            border-bottom: 2px solid var(--bg-elevated);
+            margin-bottom: 8px;
+        }
+        .tab-btn {
+            flex: 1;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            padding: 6px 2px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 10px;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .tab-btn.active {
+            color: var(--accent);
+            border-bottom: 2px solid var(--accent);
+            margin-bottom: -2px;
+        }
+        .tab-btn.tab-licensed { color: var(--red); }
+        .tab-btn.tab-farm { color: var(--green); }
+        .tab-btn.active.tab-licensed { color: var(--red); border-bottom-color: var(--red); }
+        .tab-btn.active.tab-farm { color: var(--green); border-bottom-color: var(--green); }
+
+        .view-container {
+            display: none;
+            flex-grow: 1;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+        }
         .view-container.active { display: flex; }
+        .view-scroll { overflow-y: auto; }
 
-        .grid-container { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 8px; flex-grow: 1; min-height: 0;}
-        
-        .card { background: transparent; display: flex; flex-direction: column; overflow: hidden; border-radius: 6px; position: relative;}
-        
-        .card-link { text-decoration: none; color: inherit; display: flex; flex-direction: column; cursor: pointer; flex-grow: 1;}
-        .card-link:hover .card-cover-wrap { border-color: #89b4fa; }
+        .grid-container {
+            display: grid;
+            /* minmax(0, 1fr) вместо 1fr: иначе длинные названия растягивают колонку
+               по min-content и сетка уезжает в горизонтальный скролл. */
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-auto-rows: 140px;
+            gap: 8px;
+            flex-grow: 1;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
 
-        .card-cover-wrap { position: relative; width: 100%; height: 102px; border-radius: 6px; overflow: hidden; margin-bottom: 4px; background: #313244; border: 1px solid transparent; transition: 0.2s;}
-        .card-cover { width: 100%; height: 100%; object-fit: cover; }
-        
-        .tag-top { position: absolute; top: 0; left: 0; background: rgba(203,166,247,0.9); color: #11111b; font-size: 9px; font-weight: bold; padding: 2px 5px; border-bottom-right-radius: 6px; }
-        .is-licensed .tag-top { background: rgba(243,139,168,0.9); }
-        .is-removed .tag-top { background: rgba(166,173,190,0.9); }
+        .card {
+            background: transparent;
+            display: flex;
+            flex-direction: column;
+            border-radius: 6px;
+            position: relative;
+            min-height: 0;
+            min-width: 0;
+        }
+
+        .card-link {
+            text-decoration: none;
+            color: inherit;
+            display: flex;
+            flex-direction: column;
+            cursor: pointer;
+            flex-grow: 1;
+            min-height: 0;
+            min-width: 0;
+        }
+        .card-link:hover .card-cover-wrap,
+        .card-link:focus-visible .card-cover-wrap { border-color: var(--accent); }
+
+        .card-cover-wrap {
+            position: relative;
+            width: 100%;
+            height: 94px;
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 4px;
+            background: var(--bg-input);
+            border: 1px solid transparent;
+            transition: border-color 0.2s;
+        }
+        .card-cover {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .tag-top {
+            position: absolute;
+            top: 0;
+            left: 0;
+            background: rgba(203, 166, 247, 0.9);
+            color: #11111b;
+            font-size: 9px;
+            font-weight: bold;
+            padding: 2px 5px;
+            border-bottom-right-radius: 6px;
+        }
+        .is-licensed .tag-top { background: rgba(243, 139, 168, 0.9); }
+        .is-removed .tag-top { background: rgba(166, 173, 190, 0.9); }
         .is-removed .card-cover { filter: grayscale(0.7); }
-        .tag-bottom { position: absolute; bottom: 0; right: 0; background: rgba(30,30,46,0.85); color: #cdd6f4; font-size: 8px; padding: 2px 5px; border-top-left-radius: 6px; }
+        .tag-bottom {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            background: rgba(30, 30, 46, 0.85);
+            color: var(--text);
+            font-size: 8px;
+            padding: 2px 5px;
+            border-top-left-radius: 6px;
+        }
 
-        .card-title { font-size: 11px; font-weight: bold; color: #cdd6f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; margin: 2px 0 4px 0; cursor: help; padding: 0 2px;}
-        
-        .chapter-box { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 0 4px; flex-shrink: 0; margin-top: auto;}
-        .chapter-input { width: 100%; padding: 3px; background: #313244; color: #a6e3a1; border: 1px solid #45475a; border-radius: 4px; font-weight: bold; text-align: center; font-size: 10px;}
-        .chapter-input[readonly] { border-color: transparent; color: #bac2de; padding: 0; background: transparent;}
-        .save-btn { cursor: pointer; background: #89b4fa; border: none; padding: 3px 6px; border-radius: 4px; color: #1e1e2e; font-weight: bold; font-size: 10px; display: none;}
+        .card-title {
+            font-size: 11px;
+            font-weight: bold;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-align: center;
+            margin: 2px 0 4px;
+            padding: 0 2px;
+            min-width: 0;
+        }
+
+        .chapter-box {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            padding: 0 4px;
+            flex-shrink: 0;
+            margin-top: auto;
+            min-width: 0;
+        }
+        .chapter-input {
+            width: 100%;
+            min-width: 0;
+            padding: 3px;
+            background: var(--bg-elevated);
+            color: var(--green);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-weight: bold;
+            text-align: center;
+            font-size: 10px;
+        }
+        .chapter-input[readonly] {
+            border-color: transparent;
+            color: #bac2de;
+            padding: 0;
+            background: transparent;
+        }
+        .save-btn {
+            cursor: pointer;
+            background: var(--accent);
+            border: none;
+            padding: 2px 6px;
+            min-height: 22px;
+            border-radius: 4px;
+            color: var(--bg);
+            font-weight: bold;
+            font-size: 10px;
+            display: none;
+        }
         .is-licensed .save-btn { display: block; }
         .is-licensed .chapter-input { width: 65%; }
 
-        /* КНОПКА УДАЛЕНИЯ ТАЙТЛА */
-        .delete-btn { position: absolute; top: 4px; right: 4px; background: rgba(30,30,46,0.9); color: #f38ba8; border: 1px solid #f38ba8; border-radius: 4px; width: 22px; height: 22px; font-weight: bold; font-size: 10px; cursor: pointer; display: none; z-index: 10; align-items: center; justify-content: center; padding: 0; transition: 0.2s;}
-        .card:hover .delete-btn { display: flex; }
-        .delete-btn:hover { background: #f38ba8; color: #11111b; }
+        .delete-btn {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            background: rgba(30, 30, 46, 0.9);
+            color: var(--red);
+            border: 1px solid var(--red);
+            border-radius: 4px;
+            width: 24px;
+            height: 24px;
+            font-weight: bold;
+            font-size: 10px;
+            cursor: pointer;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            transition: background-color 0.2s, color 0.2s, opacity 0.2s;
+        }
+        .card:hover .delete-btn,
+        .card:focus-within .delete-btn {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .delete-btn:hover { background: var(--red); color: #11111b; }
 
-        .pagination { display: flex; justify-content: space-between; align-items: center; background: #313244; padding: 6px 10px; border-radius: 6px; margin-top: 8px; flex-shrink: 0;}
-        .page-btn { background: #45475a; border: none; color: white; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 11px;}
+        .pagination {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-elevated);
+            padding: 6px 10px;
+            border-radius: 6px;
+            margin-top: 8px;
+            flex-shrink: 0;
+        }
+        .page-btn {
+            background: var(--bg-input);
+            border: none;
+            color: white;
+            padding: 4px 10px;
+            min-height: 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 11px;
+        }
         .page-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .page-info { font-size: 11px; font-weight: bold; color: #a6adc8;}
+        .page-info { font-size: 11px; font-weight: bold; color: var(--text-muted); }
 
         .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .stat-box { background: #313244; padding: 15px; border-radius: 8px; text-align: center; }
-        .stat-title { font-size: 11px; color: #a6adc8; margin-bottom: 5px; text-transform: uppercase; font-weight: bold;}
-        .stat-val { font-size: 24px; font-weight: bold; color: #cba6f7; }
+        .stat-box { background: var(--bg-elevated); padding: 15px; border-radius: 8px; text-align: center; }
+        .stat-box-wide { grid-column: span 2; }
+        .stat-title { font-size: 11px; color: var(--text-muted); margin-bottom: 5px; text-transform: uppercase; font-weight: bold; }
+        .stat-val { font-size: 24px; font-weight: bold; color: var(--accent-purple); }
+        .stat-val.blue { color: var(--accent); }
+        .stat-val.green { color: var(--green); }
+        .stat-val.orange { color: var(--orange); }
+        .stat-val.red { color: var(--red); }
+        .stat-val.pink { color: var(--pink); }
 
-        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(17,17,27,0.95); z-index: 100; padding: 15px;}
-        .modal-content { background: #1e1e2e; border: 1px solid #45475a; border-radius: 8px; height: 100%; display: flex; flex-direction: column; overflow: hidden;}
-        .modal-view { display: none; flex-direction: column; height: 100%; padding: 15px;}
+        /* ===== ДИАЛОГИ ===== */
+        dialog.modal {
+            width: 100%;
+            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            margin: 0;
+            padding: 15px;
+            border: 0;
+            background: transparent;
+            color: inherit;
+            overscroll-behavior: contain;
+        }
+        dialog.modal::backdrop {
+            background: rgba(17, 17, 27, 0.95);
+            overflow: hidden;
+            overscroll-behavior: contain;
+        }
+
+        .modal-content {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .modal-view {
+            display: none;
+            flex-direction: column;
+            height: 100%;
+            padding: 15px;
+        }
         .modal-view.active { display: flex; }
-        .warning-text { text-align: center; font-size: 13px; line-height: 1.5; margin-top: 20px; color: #bac2de;}
-        .warning-text span { color: #f38ba8; font-weight: bold;}
-        
-        .sync-log-box { flex-grow: 1; background: #11111b; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 11px; color: #a6e3a1; display: flex; align-items: center; justify-content: center; text-align: center;}
-        
-        .diff-list { flex-grow: 1; overflow-y: auto; background: #11111b; padding: 10px; font-family: monospace; font-size: 11px; border-radius: 6px; margin-bottom: 10px;}
-        .diff-add { color: #a6e3a1; margin-bottom:4px;} .diff-mod { color: #89b4fa; margin-bottom:4px;} .diff-rm { color: #f38ba8; margin-bottom:4px;}
-        
-        .modal-footer { display: flex; gap: 10px; flex-shrink: 0;}
-        .btn-green { flex: 1; background: #a6e3a1; color: #11111b; border: none; padding: 8px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; text-transform: uppercase;}
-        .btn-red { flex: 1; background: #f38ba8; color: #11111b; border: none; padding: 8px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; text-transform: uppercase;}
+        .modal-view h2 {
+            margin: 0 0 10px;
+            text-align: center;
+            color: var(--text);
+            text-transform: uppercase;
+            font-size: 15px;
+        }
+        .modal-spacer { flex-grow: 1; }
+
+        .warning-text {
+            text-align: center;
+            font-size: 13px;
+            line-height: 1.5;
+            margin-top: 20px;
+            color: #bac2de;
+        }
+        .warning-text span { color: var(--red); font-weight: bold; }
+
+        .sync-log-box {
+            flex-grow: 1;
+            background: var(--bg-log);
+            border-radius: 6px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 11px;
+            color: var(--green);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .diff-list {
+            flex-grow: 1;
+            overflow-y: auto;
+            background: var(--bg-log);
+            padding: 10px;
+            font-family: monospace;
+            font-size: 11px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+        }
+        .diff-add { color: var(--green); margin-bottom: 4px; }
+        .diff-mod { color: var(--accent); margin-bottom: 4px; }
+        .diff-rm { color: var(--red); margin-bottom: 4px; }
+        .diff-sub { padding-inline-start: 1.5em; }
+        .diff-empty { color: var(--text-muted); text-align: center; }
+
+        .modal-footer { display: flex; gap: 10px; flex-shrink: 0; }
+        .btn-green {
+            flex: 1;
+            background: var(--green);
+            color: #11111b;
+            border: none;
+            padding: 8px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        .btn-red {
+            flex: 1;
+            background: var(--red);
+            color: #11111b;
+            border: none;
+            padding: 8px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        dialog.confirm-modal {
+            width: calc(100% - 30px);
+            max-width: 380px;
+            margin: auto;
+            padding: 0;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg);
+            color: var(--text);
+        }
+        dialog.confirm-modal::backdrop { background: rgba(17, 17, 27, 0.8); }
+        .confirm-content {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 20px;
+        }
+        .confirm-content h2 {
+            margin: 0;
+            text-align: center;
+            font-size: 15px;
+            text-transform: uppercase;
+        }
+        .confirm-text {
+            margin: 0;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        /* ===== ФАРМ КАРТОЧЕК ===== */
+        .farm-controls { flex-shrink: 0; background: var(--bg-elevated); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+        .farm-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+        .farm-row:last-child { margin-bottom: 0; }
+        .farm-label { font-size: 12px; font-weight: 600; color: var(--text); }
+        .farm-hint { margin: 2px 0 0; font-size: 10px; color: var(--text-muted); }
+        .farm-input-group { display: flex; align-items: center; gap: 6px; }
+
+        .toggle { position: relative; width: 40px; height: 24px; cursor: pointer; flex-shrink: 0; }
+        .toggle input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            margin: -1px;
+            padding: 0;
+            border: 0;
+            overflow: hidden;
+            clip-path: inset(50%);
+            white-space: nowrap;
+        }
+        .toggle-slider {
+            position: absolute;
+            inset: 1px 0;
+            background: var(--bg-input);
+            border-radius: 22px;
+            transition: background-color 0.3s;
+        }
+        .toggle-slider::before {
+            content: "";
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            left: 3px;
+            bottom: 3px;
+            background: var(--text);
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+        .toggle input:checked + .toggle-slider { background: var(--green); }
+        .toggle input:checked + .toggle-slider::before { transform: translateX(18px); }
+        .toggle input:focus-visible + .toggle-slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+        .farm-input {
+            width: 60px;
+            padding: 4px 8px;
+            background: var(--bg-input);
+            border: 1px solid var(--border-strong);
+            border-radius: 4px;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .farm-input:hover { border-color: var(--accent); }
+        .farm-input:focus-visible { border-color: var(--accent); }
+
+        .farm-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 4px;
+        }
+        .farm-status.off { background: var(--bg-input); color: var(--text-muted); }
+        .farm-status.on { background: rgba(166, 227, 161, 0.15); color: var(--green); }
+        .farm-dot { width: 6px; height: 6px; border-radius: 50%; }
+        .farm-status.off .farm-dot { background: var(--text-muted); }
+        .farm-status.on .farm-dot { background: var(--green); animation: farm-pulse 1.2s infinite; }
+
+        @keyframes farm-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .farm-stats-section { flex-shrink: 0; margin-bottom: 10px; }
+        .farm-section-title {
+            margin: 0 0 6px;
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+        .farm-stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+        .farm-stat { background: var(--bg-elevated); border-radius: 6px; padding: 8px; text-align: center; }
+        .farm-stat-title { font-size: 9px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 3px; }
+        .farm-stat-val { font-size: 16px; font-weight: bold; color: var(--accent); }
+        .farm-stat-val.green { color: var(--green); }
+        .farm-stat-val.purple { color: var(--accent-purple); }
+        .farm-global-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+        .farm-log {
+            flex-grow: 1;
+            min-height: 0;
+            background: var(--bg-log);
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+            font-size: 10px;
+            color: var(--green);
+            overflow-y: auto;
+            line-height: 1.5;
+        }
+        .farm-log-entry { white-space: pre-wrap; overflow-wrap: anywhere; }
+        .farm-log-entry:nth-child(even) { color: var(--accent); }
+
+        input[type="number"] { appearance: textfield; }
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            appearance: none;
+            margin: 0;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+                scroll-behavior: auto !important;
+            }
+        }
+
     </style>
 </head>
 <body>
-    <button id="scan-btn" class="header-btn">Синхронизировать библиотеку</button>
+    <h1 class="visually-hidden">Senkuro Tracker</h1>
 
-    <div class="tabs">
-        <button data-tab="Читаю" class="tab-btn active">Читаю</button>
-        <button data-tab="В планах" class="tab-btn">В планах</button>
-        <button data-tab="Прочитано" class="tab-btn">Прочитано</button>
-        <button data-tab="Лицензии" class="tab-btn" style="color:#f38ba8;">Лицензии</button>
-        <button data-tab="Статистика" class="tab-btn">Статистика</button>
-    </div>
+    <header class="app-header">
+        <button id="scan-btn" class="header-btn" type="button">Синхронизировать библиотеку</button>
+        <p id="scan-status" class="status-message" role="status" hidden></p>
+    </header>
 
-    <!-- Сетка -->
-    <div id="view-grid" class="view-container active">
-        <div id="grid-container" class="grid-container"></div>
-        <div class="pagination">
-            <button id="prev-page" class="page-btn">НАЗАД</button>
-            <span id="page-info" class="page-info">1 / 1</span>
-            <button id="next-page" class="page-btn">ВПРЕД</button>
+    <nav class="tabs" aria-label="Разделы">
+        <button type="button" data-tab="Читаю" class="tab-btn active" aria-current="page">Читаю</button>
+        <button type="button" data-tab="В планах" class="tab-btn">В планах</button>
+        <button type="button" data-tab="Прочитано" class="tab-btn">Прочитано</button>
+        <button type="button" data-tab="Лицензии" class="tab-btn tab-licensed">Лицензии</button>
+        <button type="button" data-tab="Фарм" class="tab-btn tab-farm">Фарм</button>
+        <button type="button" data-tab="Статистика" class="tab-btn">Статистика</button>
+    </nav>
+
+    <main class="app-main">
+        <!-- Сетка -->
+        <div id="view-grid" class="view-container active">
+            <div id="grid-container" class="grid-container"></div>
+            <div class="pagination">
+                <button id="prev-page" class="page-btn" type="button">НАЗАД</button>
+                <span id="page-info" class="page-info" role="status">1 / 1</span>
+                <button id="next-page" class="page-btn" type="button">ВПРЕД</button>
+            </div>
         </div>
-    </div>
 
-    <!-- Статистика -->
-    <div id="view-stats" class="view-container" style="overflow-y:auto;">
-        <div class="stat-grid" id="stats-grid"></div>
-    </div>
+        <!-- Фарм карточек -->
+        <div id="view-farm" class="view-container">
+            <div class="farm-controls">
+                <div class="farm-row">
+                    <div>
+                        <label class="farm-label" for="farm-toggle">Автофарм карточек</label>
+                        <p class="farm-hint" id="farm-toggle-hint">Работает на страницах чтения манги</p>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="farm-toggle" aria-describedby="farm-toggle-hint">
+                        <span class="toggle-slider" aria-hidden="true"></span>
+                    </label>
+                </div>
+                <div class="farm-row">
+                    <label class="farm-label" for="farm-wait">Задержка между попытками</label>
+                    <div class="farm-input-group">
+                        <input type="number" id="farm-wait" class="farm-input" value="1" min="1" max="30" step="1" inputmode="numeric" aria-describedby="farm-wait-unit">
+                        <span id="farm-wait-unit" class="farm-label">сек</span>
+                    </div>
+                </div>
+                <div class="farm-row">
+                    <label class="farm-label" for="farm-attempts">Попыток на страницу</label>
+                    <div class="farm-input-group">
+                        <input type="number" id="farm-attempts" class="farm-input" value="1" min="1" max="20" step="1" inputmode="numeric">
+                    </div>
+                </div>
+                <div class="farm-row">
+                    <span class="farm-label">Статус</span>
+                    <span id="farm-status-badge" class="farm-status off" role="status"><span class="farm-dot" aria-hidden="true"></span>Выкл</span>
+                </div>
+            </div>
 
-    <!-- Модалка -->
-    <div id="sync-modal" class="modal">
+            <div class="farm-stats-section">
+                <h2 class="farm-section-title">Текущая сессия</h2>
+                <div class="farm-stats-grid">
+                    <div class="farm-stat"><div class="farm-stat-title">Карт</div><div class="farm-stat-val green" id="f-s-cards">0</div></div>
+                    <div class="farm-stat"><div class="farm-stat-title">Страниц</div><div class="farm-stat-val" id="f-s-pages">0</div></div>
+                    <div class="farm-stat"><div class="farm-stat-title">Время</div><div class="farm-stat-val purple" id="f-s-time">00:00</div></div>
+                </div>
+            </div>
+
+            <div class="farm-stats-section">
+                <h2 class="farm-section-title">Глобальная статистика</h2>
+                <div class="farm-stats-grid farm-global-grid">
+                    <div class="farm-stat"><div class="farm-stat-title">Всего карт собрано</div><div class="farm-stat-val green" id="f-g-cards">0</div></div>
+                    <div class="farm-stat"><div class="farm-stat-title">Общее время</div><div class="farm-stat-val purple" id="f-g-time">00:00:00</div></div>
+                </div>
+            </div>
+
+            <div class="farm-log" id="farm-log" role="log" aria-label="Журнал фарма"></div>
+        </div>
+
+        <!-- Статистика -->
+        <div id="view-stats" class="view-container view-scroll">
+            <h2 class="visually-hidden">Статистика</h2>
+            <div class="stat-grid" id="stats-grid"></div>
+        </div>
+    </main>
+
+    <!-- Модалка синхронизации -->
+    <dialog id="sync-modal" class="modal" aria-labelledby="sync-title-warning">
         <div class="modal-content">
             <div id="view-warning" class="modal-view active">
-                <h3 style="text-align:center; color:#cdd6f4; margin-top:0; text-transform: uppercase;">Системная синхронизация</h3>
-                <div class="warning-text">Процесс затронет ваши вкладки и потребует перезагрузки страницы.<br><br><span>Окно браузера будет моргать. Не взаимодействуйте со страницей до завершения сканирования.</span></div>
-                <div style="flex-grow:1;"></div>
+                <h2 id="sync-title-warning">Системная синхронизация</h2>
+                <p class="warning-text">Процесс затронет ваши вкладки и потребует перезагрузки страницы.<br><br><span>Окно браузера будет моргать. Не взаимодействуйте со страницей до завершения сканирования.</span></p>
+                <div class="modal-spacer"></div>
                 <div class="modal-footer">
-                    <button id="btn-start-sync" class="btn-green">Начать сканирование</button>
-                    <button class="btn-red close-modal-btn">Отмена</button>
+                    <button id="btn-start-sync" class="btn-green" type="button" autofocus>Начать сканирование</button>
+                    <button type="button" class="btn-red close-modal-btn">Отмена</button>
                 </div>
             </div>
             <div id="view-progress" class="modal-view">
-                <h3 style="text-align:center; margin-top:0; color: #cdd6f4; text-transform: uppercase;">Обработка данных</h3>
-                <div class="sync-log-box" id="sync-status-text">Подготовка интерфейса...</div>
+                <h2 id="sync-title-progress">Обработка данных</h2>
+                <div class="sync-log-box" id="sync-status-text" role="status">Подготовка интерфейса...</div>
             </div>
             <div id="view-diff" class="modal-view">
-                <h3 style="text-align:center; margin-top:0; margin-bottom: 10px; color: #cdd6f4; text-transform: uppercase;">Отчет об изменениях</h3>
+                <h2 id="sync-title-diff">Отчёт об изменениях</h2>
                 <div id="diff-box" class="diff-list"></div>
                 <div class="modal-footer">
-                    <button id="btn-confirm-diff" class="btn-green">Сохранить данные</button>
-                    <button class="btn-red close-modal-btn">Отклонить</button>
+                    <button id="btn-confirm-diff" class="btn-green" type="button">Сохранить данные</button>
+                    <button type="button" class="btn-red close-modal-btn">Отклонить</button>
                 </div>
             </div>
         </div>
-    </div>
+    </dialog>
+
+    <!-- Подтверждение удаления -->
+    <dialog id="confirm-dialog" class="confirm-modal" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+        <form method="dialog" class="confirm-content">
+            <h2 id="confirm-title">Удалить тайтл?</h2>
+            <p id="confirm-text" class="confirm-text"></p>
+            <div class="modal-footer">
+                <button value="cancel" class="btn-red" autofocus>Отмена</button>
+                <button value="confirm" class="btn-green">Удалить</button>
+            </div>
+        </form>
+    </dialog>
 
     <script src="popup.js"></script>
 </body>

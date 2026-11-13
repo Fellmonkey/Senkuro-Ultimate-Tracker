@@ -3,7 +3,7 @@
   "name": "Senkuro Ultimate Tracker",
   "version": "1.0",
   "description": "Расширение для отслеживания прогресса чтения манги на senkuro.com / senkuro.me.",
-  "permissions": ["storage", "tabs"],
+  "permissions": ["storage", "tabs", "cookies"],
   "host_permissions": ["*://senkuro.com/*", "*://senkuro.me/*"],
   "action": {
     "default_popup": "popup.html"
@@ -11,7 +11,7 @@
   "content_scripts": [
     {
       "matches": ["*://senkuro.com/*", "*://senkuro.me/*"],
-      "js": ["content.js"]
+      "js": ["senkuro-api.js", "content.js"]
     }
   ]
 }

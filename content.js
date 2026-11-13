@@ -1,150 +1,288 @@
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Обработка сообщений от popup.js
-// ВАЖНО: return true обязателен для async sendResponse — иначе ответ не дойдёт
+class CardFarmer {
+    constructor() {
+        this.isRunning = false;
+        this.waitTime = 3000;
+        this.attemptsPerPage = 3;
+        this.sessionStats = { cardsCollected: 0, startTime: null, pagesChecked: 0 };
+        this.globalStats = { totalCards: 0, totalTime: 0 };
+        this._statsInterval = null;
+    }
+
+    isReadingPage() {
+        return /\/manga\/[^/]+\/chapters\/\d+/.test(window.location.pathname);
+    }
+
+    async start(waitTime, attemptsPerPage) {
+        if (this.isRunning) return { success: false, error: "Уже запущен" };
+        if (!this.isReadingPage()) return { success: false, error: "Не на странице чтения. Откройте главу манги." };
+
+        this.waitTime = (waitTime || 3) * 1000;
+        this.attemptsPerPage = attemptsPerPage || 3;
+        this.isRunning = true;
+        this.sessionStats = { cardsCollected: 0, startTime: Date.now(), pagesChecked: 0 };
+
+        const data = await chrome.storage.local.get("senkuroFarmStats");
+        this.globalStats = data.senkuroFarmStats || { totalCards: 0, totalTime: 0 };
+
+        this.log(`Старт: ${this.attemptsPerPage} попыток × ${this.waitTime / 1000}с на стр.`);
+        this._statsInterval = setInterval(() => this._pushStats(), 1000);
+        this._farmLoop();
+        return { success: true };
+    }
+
+    stop() {
+        if (!this.isRunning) return { success: false, error: "Не запущен" };
+        this.isRunning = false;
+        if (this._statsInterval) { clearInterval(this._statsInterval); this._statsInterval = null; }
+        this._saveStats();
+        this.log(`Стоп. Сессия: ${this.sessionStats.cardsCollected} карт / ${this.sessionStats.pagesChecked} стр.`);
+        return { success: true, stats: this.getStats() };
+    }
+
+    _getTotalPages() {
+        const el = document.querySelector('.nav-panel__page button span');
+        if (el) {
+            const m = el.textContent.match(/(\d+)\/(\d+)/);
+            if (m) return parseInt(m[2]);
+        }
+        const items = document.querySelectorAll('.reader-item');
+        return items.length || 1;
+    }
+
+    _scrollToPage(num) {
+        const items = document.querySelectorAll('.reader-item');
+        if (items[num - 1]) {
+            items[num - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+
+    _clickNextPage() {
+        const arrows = document.querySelectorAll('.nav-panel__bar-arrow');
+        const rightArrow = arrows[arrows.length - 1];
+        if (rightArrow && !rightArrow.disabled && !rightArrow.classList.contains('button--disabled')) {
+            rightArrow.click();
+            return true;
+        }
+        return false;
+    }
+
+    _clickNextChapter() {
+        const btn = document.querySelector('button[aria-label="Следующая глава"]');
+        if (btn && !btn.disabled && !btn.classList.contains('button--disabled')) {
+            btn.click();
+            return true;
+        }
+        const arrow = document.querySelector('.reader-chapters__arrow-right');
+        if (arrow && !arrow.classList.contains('reader-chapters__arrow--disabled')) {
+            arrow.click();
+            return true;
+        }
+        return false;
+    }
+
+    async _farmLoop() {
+        while (this.isRunning) {
+            if (!this.isReadingPage()) {
+                this.log("Навигация ушла со страницы — стоп.");
+                this.stop();
+                break;
+            }
+
+            const totalPages = this._getTotalPages();
+            const chapterName = this._getChapterName();
+            this.log(`=== ${chapterName} | ${totalPages} стр. ===`);
+
+            for (let page = 1; page <= totalPages && this.isRunning; page++) {
+                this.sessionStats.pagesChecked++;
+                this.log(`[Стр. ${page}/${totalPages}]`);
+
+                this._scrollToPage(page);
+                await sleep(800);
+
+                let found = false;
+                for (let attempt = 1; attempt <= this.attemptsPerPage && this.isRunning; attempt++) {
+                    this.log(`  Попытка ${attempt}/${this.attemptsPerPage}...`);
+                    await sleep(this.waitTime);
+                    if (!this.isRunning) break;
+
+                    const card = document.querySelector("img.cards-drop");
+                    if (card) {
+                        this.log(`  Нашёл! Клик...`);
+                        card.click();
+
+                        const modal = await this._waitForAny([".modal-container-drop", ".vfm__content.modal-drop"], 5000);
+                        if (modal) {
+                            await sleep(2500);
+                            await this._closeAnyModal();
+                            const closed = await this._waitForAnyClose(3000);
+
+                            if (closed) {
+                                this.sessionStats.cardsCollected++;
+                                this.globalStats.totalCards++;
+                                this.log(`  Собрано! (+1 → ${this.sessionStats.cardsCollected})`);
+                            } else {
+                                this.log(`  Не удалось закрыть модалку`);
+                            }
+                        } else {
+                            this.log(`  Модалка не появилась`);
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found && this.isRunning) {
+                    this.log(`  Пусто`);
+                }
+            }
+
+            if (!this.isRunning) break;
+
+            this.log("Следующая глава...");
+            if (!this._clickNextChapter()) {
+                this.log("Больше нет глав. Фарм завершён.");
+                this.stop();
+                break;
+            }
+
+            await sleep(4000);
+
+            let waitAttempts = 0;
+            while (this.isRunning && waitAttempts < 20) {
+                const items = document.querySelectorAll('.reader-item');
+                if (items.length > 0 && items[0].querySelector('img[src*="senkuro"]')) break;
+                await sleep(500);
+                waitAttempts++;
+            }
+        }
+    }
+
+    _getChapterName() {
+        const h2 = document.querySelector('.nav-reader__caption h2');
+        const p = document.querySelector('.nav-reader__caption p');
+        const title = h2 ? h2.textContent.trim() : "";
+        const chap = p ? p.textContent.trim() : "";
+        return `${title} | ${chap}`.trim();
+    }
+
+    _isVisible(el) {
+        if (!el || !el.offsetParent) return false;
+        const s = window.getComputedStyle(el);
+        return s.display !== "none" && s.opacity !== "0";
+    }
+
+    async _waitForAny(selectors, timeout) {
+        const t0 = Date.now();
+        while (Date.now() - t0 < timeout) {
+            for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                if (el && this._isVisible(el)) return el;
+            }
+            await sleep(100);
+        }
+        return null;
+    }
+
+    _visibleDrop() {
+        const el = document.querySelector(".modal-container-drop, .modal-drop");
+        return this._isVisible(el) ? el : null;
+    }
+
+    async _waitForAnyClose(timeout) {
+        const t0 = Date.now();
+        while (Date.now() - t0 < timeout) {
+            if (!this._visibleDrop()) return true;
+            await sleep(100);
+        }
+        return false;
+    }
+
+    async _closeAnyModal() {
+        // Новое окно «Получена новая карта!»: закрывается кликом по подсказке
+        // «Нажми, чтобы продолжить» (иногда — по фону). Пробуем оба варианта.
+        for (const sel of [".modal-drop__info", ".vfm__overlay"]) {
+            const el = document.querySelector(sel);
+            if (!el) continue;
+            el.click();
+            await sleep(500);
+            if (!this._visibleDrop()) return true;
+        }
+
+        const modal = this._visibleDrop();
+        if (modal) modal.click();
+
+        document.dispatchEvent(new KeyboardEvent("keydown", {
+            key: "Escape", code: "Escape", keyCode: 27, bubbles: true
+        }));
+        return !this._visibleDrop();
+    }
+
+    async _saveStats() {
+        if (!this.sessionStats.startTime) return;
+        const elapsed = Date.now() - this.sessionStats.startTime;
+        const totalTime = this.globalStats.totalTime + elapsed;
+        await chrome.storage.local.set({
+            senkuroFarmStats: { totalCards: this.globalStats.totalCards, totalTime }
+        });
+    }
+
+    _pushStats() {
+        chrome.runtime.sendMessage({ action: "farm_stats", stats: this.getStats() }).catch(() => {});
+    }
+
+    log(text) {
+        chrome.runtime.sendMessage({ action: "farm_log", text }).catch(() => {});
+    }
+
+    getStats() {
+        return {
+            isRunning: this.isRunning,
+            session: {
+                cardsCollected: this.sessionStats.cardsCollected,
+                pagesChecked: this.sessionStats.pagesChecked,
+                elapsed: this.sessionStats.startTime ? Date.now() - this.sessionStats.startTime : 0
+            },
+            global: { ...this.globalStats }
+        };
+    }
+}
+
+const cardFarmer = new CardFarmer();
+
+async function syncViaApi(token) {
+    if (!window.SenkuroApi) {
+        return { error: 'SenkuroApi не загружен в контентный скрипт' };
+    }
+    try {
+        const options = {
+            fetchImpl: (url, opts) => fetch(url, { ...opts, credentials: 'include' })
+        };
+        if (token) options.token = token;
+        const result = await window.SenkuroApi.fetchBookmarks(options);
+        return result;
+    } catch (error) {
+        return { error: error.message || String(error) };
+    }
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === "scan_tab") {
-        scanSingleTab(request.tabName).then(sendResponse);
+    if (request.action === "sync_via_api") {
+        syncViaApi(request.token).then(sendResponse);
         return true;
     }
-    if (request.action === "check_licenses") {
-        checkLicensesBatch(request.ids).then(sendResponse);
+    if (request.action === "start_farm") {
+        cardFarmer.start(request.waitTime, request.attemptsPerPage).then(sendResponse);
+        return true;
+    }
+    if (request.action === "stop_farm") {
+        sendResponse(cardFarmer.stop());
+        return true;
+    }
+    if (request.action === "get_farm_stats") {
+        sendResponse(cardFarmer.getStats());
         return true;
     }
 });
 
-/** Отправка логов в popup для отображения в UI синхронизации */
-function logToPlugin(text) {
-    chrome.runtime.sendMessage({ action: "sync_log", text: text }).catch(() => {});
-}
-
-/**
- * Сканирует одну вкладку закладок («Читаю», «В планах», «Прочитано»).
- *
- * Алгоритм:
- * 1. Находит нужную вкладку по тексту и кликает по ней
- * 2. Ждёт 2с для загрузки карточек
- * 3. Прокручивает страницу, собирая данные со всех article.card-main
- * 4. Если скролл застрял (4 попытки без новых данных) — сохраняет что есть
- *
- * @param {string} tabName - Название вкладки для сканирования
- * @returns {Promise<{success: boolean, data?: object, error?: string}>}
- */
-async function scanSingleTab(tabName) {
-    let collectedMap = new Map();
-
-    const tabs = Array.from(document.querySelectorAll('.favorites-filter .tabs-tab'));
-    const targetTab = tabs.find(t => t.innerText.includes(tabName));
-
-    if (!targetTab) return { success: false, error: "Вкладка не найдена" };
-
-    targetTab.click();
-    await sleep(2000);
-
-    const countElem = targetTab.querySelector('.favorites-count');
-    const expectedCount = countElem ? parseInt(countElem.innerText) : 0;
-
-    if (expectedCount === 0) return { success: true, data: {} };
-
-    let stuckAttempts = 0;
-    let prevCount = 0;
-
-    logToPlugin(`[СКРОЛЛИНГ] ${tabName}: 0 / ${expectedCount}`);
-
-    while (collectedMap.size < expectedCount) {
-        document.querySelectorAll('article.card-main').forEach(card => {
-            const link = card.querySelector('a[href^="/manga/"]');
-            if (!link) return;
-
-            const mangaId = link.getAttribute('href').match(/\/manga\/([^\/]+)/)[1];
-            if (collectedMap.has(mangaId)) return;
-
-            const titleElem = card.querySelector('.card-title');
-            const imgElem = card.querySelector('.cover-wrapper img');
-            const statusUp = card.querySelector('.card-status__up');
-            const formatDown = card.querySelector('.card-status__down');
-
-            let chapter = "0";
-            if (statusUp) {
-                const parts = statusUp.innerText.split('·');
-                if (parts.length > 1) chapter = parts[1].replace(/[^0-9.]/g, '');
-            }
-
-            collectedMap.set(mangaId, {
-                slug: mangaId,
-                title: titleElem ? titleElem.innerText.trim() : mangaId,
-                lastChapter: chapter,
-                format: formatDown ? formatDown.innerText.replace('<!---->','').trim() : "",
-                userStatus: tabName,
-                coverUrl: imgElem ? (imgElem.getAttribute('src') || imgElem.getAttribute('data-zoom-src')) : '',
-                isLicensed: false,
-                date: new Date().toLocaleDateString()
-            });
-        });
-
-        logToPlugin(`[СКРОЛЛИНГ] ${tabName}: ${collectedMap.size} / ${expectedCount}`);
-        if (collectedMap.size >= expectedCount) break;
-
-        // Плавно скроллит вниз для загрузки ленивых карточек
-        for (let i = 0; i < 3; i++) {
-            window.scrollBy({ top: 600, behavior: 'smooth' });
-            document.dispatchEvent(new WheelEvent('wheel', { deltaY: 600, bubbles: true }));
-            await sleep(300);
-        }
-
-        // Если скролл застрял — extreme scroll (вверх-вниз)
-        if (collectedMap.size === prevCount) {
-            stuckAttempts++;
-            window.scrollTo(0, 0);
-            await sleep(600);
-            window.scrollTo(0, document.body.scrollHeight);
-            await sleep(600);
-
-            if (stuckAttempts > 4) {
-                logToPlugin(`[ВНИМАНИЕ] Сайт отдал не все данные. Сохраняем доступные.`);
-                break;
-            }
-        } else {
-            stuckAttempts = 0;
-        }
-        prevCount = collectedMap.size;
-    }
-
-    return { success: true, data: Object.fromEntries(collectedMap) };
-}
-
-/**
- * Проверяет лицензии для списка тайтлов.
- *
- * Запрашивает /manga/{id}/chapters (страницу глав) для каждого ID.
- * Лицензия определяется по наличию класса empty__label + ключевых слов
- * о правеобладателях / удалении.
- *
- * Также парсит глобальный статус тайтла (Онгоинг/Завершён/Заморожен и т.д.)
- *
- * @param {string[]} ids - Массив slug-ов тайтлов
- * @returns {Promise<Object>} - { [id]: { isLicensed: boolean, globalStatus: string } }
- */
-async function checkLicensesBatch(ids) {
-    let results = {};
-    await Promise.all(ids.map(async (id) => {
-        try {
-            const res = await fetch(`/manga/${id}/chapters`);
-            const html = await res.text();
-
-            let isLicensed = false;
-            let globalStatus = "Онгоинг";
-
-            if (html.includes('empty__label') && (html.includes('правообладател') || html.includes('удален') || html.includes('закон'))) {
-                isLicensed = true;
-            }
-
-            // Извлекаем статус тайтла из бокового меню
-            const statusMatch = html.match(/Статус тайтла[\s\S]*?class="chip[^>]*><\/span>\s*([^<]+)<\/a>/);
-            if (statusMatch) globalStatus = statusMatch[1].trim();
-
-            results[id] = { isLicensed, globalStatus };
-        } catch (e) {}
-    }));
-    return results;
-}
