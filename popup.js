@@ -47,6 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let pendingSyncData = null;
 
     let farmPollInterval = null;
+    let lastTasks = [];
 
     // Базовый сайт для ссылок на карточках: тот же, что открыт во вкладке.
     let siteBaseUrl = 'https://senkuro.com';
@@ -294,7 +295,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return box;
     }
 
-    function renderStats() {
+    async function renderStats() {
         const stats = { total: allTitlesArray.length, chapters: 0, licensed: 0, formats: {}, statuses: {} };
 
         allTitlesArray.forEach((data) => {
@@ -319,6 +320,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (topFormat) {
             fragment.append(createStatBox('Любимый формат', `${topFormat[0]} (${topFormat[1]})`, 'pink', true));
         }
+
+        // Задания, выполненные через расширение.
+        const stored = await new Promise((resolve) => {
+            chrome.storage.local.get(['senkuroTaskStats'], resolve);
+        });
+        const taskStats = stored.senkuroTaskStats || {};
+
+        fragment.append(
+            createStatBox('Циклов заданий', Math.round(taskStats.cycles || 0), 'purple'),
+            createStatBox('Очки за задания', Math.round(taskStats.points || 0), 'orange'),
+            createStatBox('Опыт за задания', Math.round(taskStats.exp || 0), 'green')
+        );
 
         document.getElementById('stats-grid').replaceChildren(fragment);
     }
@@ -479,6 +492,7 @@ document.addEventListener('DOMContentLoaded', () => {
         load().then((res) => {
             const list = document.getElementById('tasks-list');
             if (res && res.tasks) {
+                lastTasks = res.tasks;
                 renderTasks(res.tasks);
             } else {
                 list.replaceChildren();
@@ -487,6 +501,36 @@ document.addEventListener('DOMContentLoaded', () => {
                 err.textContent = res && res.error ? `Ошибка: ${res.error}` : 'Нет ответа от страницы.';
                 list.append(err);
             }
+        });
+    }
+
+    /** Порция награды за один цикл авто-задания (награда ÷ цель). */
+    function taskRewardPerCycle(kind) {
+        const auto = lastTasks.filter((t) => AUTO_TASK_RE.test(t.task.slug || '') && t.task.active !== false);
+        const task = auto.find((t) => {
+            const target = taskTarget(t.task.slug);
+            return target && Number(t.progress) < target;
+        }) || auto[0];
+        if (!task) return null;
+
+        const target = taskTarget(task.task.slug);
+        if (!target || target <= 0) return null;
+
+        return {
+            points: (Number(task.task.points) || 0) / target,
+            experience: (Number(task.task.experience) || 0) / target
+        };
+    }
+
+    function addTaskStats(cycles, unit) {
+        chrome.storage.local.get(['senkuroTaskStats'], (res) => {
+            const s = res.senkuroTaskStats || { cycles: 0, points: 0, exp: 0 };
+            s.cycles += cycles;
+            if (unit) {
+                s.points += unit.points * cycles;
+                s.exp += unit.experience * cycles;
+            }
+            chrome.storage.local.set({ senkuroTaskStats: s });
         });
     }
 
@@ -504,6 +548,9 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.disabled = false;
             if (res && res.ok) {
                 note.textContent = `Выполнено циклов: ${res.done}. Прогресс обновляется с задержкой — нажмите «Обновить» позже.`;
+                if (res.done > 0) {
+                    addTaskStats(res.done, taskRewardPerCycle(kind));
+                }
             } else {
                 note.textContent = res && res.error ? `Ошибка: ${res.error}` : 'Не удалось выполнить.';
             }
