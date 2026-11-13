@@ -3,8 +3,6 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 class CardFarmer {
     constructor() {
         this.isRunning = false;
-        this.waitTime = 3000;
-        this.attemptsPerPage = 3;
         this.sessionStats = { cardsCollected: 0, startTime: null, pagesChecked: 0 };
         this.globalStats = { totalCards: 0, totalTime: 0 };
         this._statsInterval = null;
@@ -14,19 +12,17 @@ class CardFarmer {
         return /\/manga\/[^/]+\/chapters\/\d+/.test(window.location.pathname);
     }
 
-    async start(waitTime, attemptsPerPage) {
+    async start() {
         if (this.isRunning) return { success: false, error: "Уже запущен" };
         if (!this.isReadingPage()) return { success: false, error: "Не на странице чтения. Откройте главу манги." };
 
-        this.waitTime = (waitTime || 3) * 1000;
-        this.attemptsPerPage = attemptsPerPage || 3;
         this.isRunning = true;
         this.sessionStats = { cardsCollected: 0, startTime: Date.now(), pagesChecked: 0 };
 
         const data = await chrome.storage.local.get("senkuroFarmStats");
         this.globalStats = data.senkuroFarmStats || { totalCards: 0, totalTime: 0 };
 
-        this.log(`Старт: ${this.attemptsPerPage} попыток × ${this.waitTime / 1000}с на стр.`);
+        this.log(`Старт. Ритм чтения подстраивается под высоту страниц.`);
         this._statsInterval = setInterval(() => this._pushStats(), 1000);
         this._farmLoop();
         return { success: true };
@@ -51,10 +47,116 @@ class CardFarmer {
         return items.length || 1;
     }
 
-    _scrollToPage(num) {
+    async _waitForTruthy(predicate, timeout) {
+        const t0 = Date.now();
+        while (Date.now() - t0 < timeout) {
+            if (predicate()) return true;
+            await sleep(100);
+        }
+        return false;
+    }
+
+    /**
+     * Имитация чтения страницы:
+     * 1) ждём загрузку иллюстрации;
+     * 2) разбиваем страницу на «экраны» по высоте окна;
+     * 3) короткие страницы иногда просто пролистываются;
+     * 4) читаем сверху вниз: шаг скролла + случайная пауза на экран;
+     * 5) вариативность жестов: плавно/резко, изредка возврат назад;
+     * 6) длинные страницы иногда не дочитываются до конца;
+     * 7) редкие «заминки»; итоговое время — 3–45 с.
+     */
+    async _readPage(num) {
         const items = document.querySelectorAll('.reader-item');
-        if (items[num - 1]) {
-            items[num - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const item = items[num - 1];
+        if (!item) {
+            await sleep(1500 + Math.random() * 1000);
+            return;
+        }
+
+        const img = item.querySelector('img');
+        if (img && !img.complete) {
+            await this._waitForTruthy(() => img.complete || img.naturalWidth > 0, 8000);
+        }
+
+        const viewportH = Math.max(window.innerHeight, 600);
+        const itemRect = item.getBoundingClientRect();
+        const height = Math.max(
+            img ? Math.max(img.naturalHeight || 0, img.clientHeight || 0) : 0,
+            itemRect.height || 0
+        );
+        let screens = Math.max(1, Math.round(height / viewportH));
+
+        // Быстрое пролистывание маленьких страниц (меньше половины экрана).
+        const small = height > 0 && height < viewportH * 0.5;
+        if (small && Math.random() < 0.25) {
+            const quick = 500 + Math.random() * 400;
+            try {
+                item.scrollIntoView({ behavior: 'auto', block: 'end' });
+            } catch {
+                // ignore
+            }
+            await sleep(quick);
+            this.log(`  Пролистал (~${Math.round(quick / 1000)} с)`);
+            return;
+        }
+
+        // Хвост: очень длинные страницы иногда пролистываются не до конца.
+        let skipTail = 0;
+        if (screens > 6 && Math.random() < 0.18) {
+            skipTail = Math.max(1, Math.floor(screens * (0.1 + Math.random() * 0.2)));
+            screens -= skipTail;
+        }
+
+        // Суммарное «время чтения»: база + время на каждый экран.
+        let total = 1000 + Math.random() * 1500 + screens * (900 + Math.random() * 1400);
+        total = Math.min(Math.max(total, 3000), 45000);
+
+        try {
+            item.scrollIntoView({ behavior: 'auto', block: 'start' });
+        } catch {
+            // Если scrollIntoView недоступен с этими опциями — продолжаем.
+        }
+        await sleep(200 + Math.random() * 400);
+
+        this.log(`  Чтение ~${Math.round(total / 1000)} с (${screens} экр.)${skipTail ? ' — хвост пролистан' : ''}...`);
+
+        for (let s = 1; s <= screens && this.isRunning; s++) {
+            const first = s === 1;
+            const last = s === screens;
+
+            // Начало читается внимательнее, конец — быстрее.
+            let weight = 1;
+            if (first && screens > 1) weight *= 1.15 + Math.random() * 0.35;
+            if (last && screens > 1) weight *= 0.65 + Math.random() * 0.25;
+            const stepMs = (total / screens) * weight;
+
+            const gesture = Math.random();
+            if (gesture < 0.12 && !first) {
+                // Лёгкий возврат назад — перечитал фрагмент.
+                window.scrollBy({
+                    top: -Math.floor(viewportH * (0.08 + Math.random() * 0.17)),
+                    behavior: Math.random() < 0.5 ? 'smooth' : 'auto'
+                });
+                await sleep(stepMs * (0.4 + Math.random() * 0.6));
+            } else {
+                window.scrollBy({
+                    top: Math.floor(viewportH * (0.55 + Math.random() * 0.35)),
+                    behavior: Math.random() < 0.5 ? 'smooth' : 'auto'
+                });
+                await sleep(stepMs * (0.6 + Math.random() * 0.9));
+            }
+
+            // «Заминка»: на длинных страницах читатель отвлекается чаще.
+            const pauseChance = screens > 6 ? 0.10 : 0.06;
+            if (Math.random() < pauseChance && this.isRunning) {
+                await sleep(1200 + Math.random() * 2800);
+            }
+        }
+
+        // Перевод взгляда на следующую страницу.
+        if (this.isRunning) {
+            await sleep(250 + Math.random() * 450);
         }
     }
 
@@ -98,47 +200,45 @@ class CardFarmer {
                 this.sessionStats.pagesChecked++;
                 this.log(`[Стр. ${page}/${totalPages}]`);
 
-                this._scrollToPage(page);
-                await sleep(800);
+                await this._readPage(page);
+                if (!this.isRunning) break;
 
-                let found = false;
-                for (let attempt = 1; attempt <= this.attemptsPerPage && this.isRunning; attempt++) {
-                    this.log(`  Попытка ${attempt}/${this.attemptsPerPage}...`);
-                    await sleep(this.waitTime);
-                    if (!this.isRunning) break;
-
-                    const card = document.querySelector("img.cards-drop");
-                    if (card) {
-                        this.log(`  Нашёл! Клик...`);
-                        card.click();
-
-                        const modal = await this._waitForAny([".modal-container-drop", ".vfm__content.modal-drop"], 5000);
-                        if (modal) {
-                            await sleep(2500);
-                            await this._closeAnyModal();
-                            const closed = await this._waitForAnyClose(3000);
-
-                            if (closed) {
-                                this.sessionStats.cardsCollected++;
-                                this.globalStats.totalCards++;
-                                this.log(`  Собрано! (+1 → ${this.sessionStats.cardsCollected})`);
-                            } else {
-                                this.log(`  Не удалось закрыть модалку`);
-                            }
-                        } else {
-                            this.log(`  Модалка не появилась`);
-                        }
-                        found = true;
-                        break;
-                    }
+                const card = document.querySelector("img.cards-drop");
+                if (!card) {
+                    this.log(`  Карта не найдена`);
+                    continue;
                 }
 
-                if (!found && this.isRunning) {
-                    this.log(`  Пусто`);
+                this.log(`  Нашёл! Клик...`);
+                card.click();
+
+                const modal = await this._waitForAny([".modal-container-drop", ".vfm__content.modal-drop"], 5000);
+                if (modal) {
+                    // Человек осматривает карту: пауза тоже непостоянна.
+                    await sleep(1500 + Math.random() * 2500);
+                    await this._closeAnyModal();
+                    const closed = await this._waitForAnyClose(3000);
+
+                    if (closed) {
+                        this.sessionStats.cardsCollected++;
+                        this.globalStats.totalCards++;
+                        this.log(`  Собрано! (+1 → ${this.sessionStats.cardsCollected})`);
+                    } else {
+                        this.log(`  Не удалось закрыть модалку`);
+                    }
+                } else {
+                    this.log(`  Модалка не появилась`);
                 }
             }
 
             if (!this.isRunning) break;
+
+            // Короткий взгляд на конец главы перед переходом (~1 секунда).
+            window.scrollBy({
+                top: -Math.floor(Math.max(window.innerHeight * 0.08, 80)),
+                behavior: 'smooth'
+            });
+            await sleep(400 + Math.random() * 600);
 
             this.log("Следующая глава...");
             if (!this._clickNextChapter()) {
@@ -147,7 +247,8 @@ class CardFarmer {
                 break;
             }
 
-            await sleep(4000);
+            // Небольшая непредсказуемость и при переходе на новую главу.
+            await sleep(3000 + Math.random() * 4000);
 
             let waitAttempts = 0;
             while (this.isRunning && waitAttempts < 20) {
@@ -273,7 +374,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
     if (request.action === "start_farm") {
-        cardFarmer.start(request.waitTime, request.attemptsPerPage).then(sendResponse);
+        cardFarmer.start().then(sendResponse);
         return true;
     }
     if (request.action === "stop_farm") {

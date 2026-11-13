@@ -13,12 +13,6 @@ function formatTime(ms) {
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-function clampInt(value, min, max) {
-    const parsed = Number.parseInt(value, 10);
-    if (!Number.isFinite(parsed)) return min;
-    return Math.min(max, Math.max(min, parsed));
-}
-
 function isSenkuroUrl(url) {
     try {
         const hostname = new URL(url).hostname;
@@ -59,8 +53,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const grid = document.getElementById('grid-container');
     const farmToggle = document.getElementById('farm-toggle');
-    const farmWaitInput = document.getElementById('farm-wait');
-    const farmAttemptsInput = document.getElementById('farm-attempts');
     const farmStatusBadge = document.getElementById('farm-status-badge');
     const farmLog = document.getElementById('farm-log');
     const syncDialog = document.getElementById('sync-modal');
@@ -618,15 +610,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const waitTime = clampInt(farmWaitInput.value, 1, 30);
-            const attemptsPerPage = clampInt(farmAttemptsInput.value, 1, 20);
-            farmWaitInput.value = String(waitTime);
-            farmAttemptsInput.value = String(attemptsPerPage);
-
-            sendToTab({ action: 'start_farm', waitTime, attemptsPerPage }).then((res) => {
+            sendToTab({ action: 'start_farm' }).then((res) => {
                 if (res && res.success) {
                     setFarmRunning(true);
-                    addFarmLog(`Фарм запущен: ${attemptsPerPage} попыток × ${waitTime}с на стр.`);
+                    addFarmLog('Фарм запущен. Ритм чтения подстраивается под высоту страниц.');
                 } else {
                     farmToggle.checked = false;
                     addFarmLog(`Ошибка: ${res ? res.error : 'Нет ответа от контента'}`);
