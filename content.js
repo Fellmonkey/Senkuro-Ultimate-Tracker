@@ -3,6 +3,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 class CardFarmer {
     constructor() {
         this.isRunning = false;
+        // true — читалка в горизонтальном режиме: страницы листаются стрелкой.
+        this.horizontalMode = false;
         this.sessionStats = { cardsCollected: 0, startTime: null, pagesChecked: 0 };
         this.globalStats = { totalCards: 0, totalTime: 0 };
         this._statsInterval = null;
@@ -21,6 +23,9 @@ class CardFarmer {
 
         const data = await chrome.storage.local.get("senkuroFarmStats");
         this.globalStats = data.senkuroFarmStats || { totalCards: 0, totalTime: 0 };
+
+        // Горизонтальный режим исключает «задевание» соседних страниц скроллом.
+        await this._ensureHorizontalMode();
 
         this.log(`Старт. Ритм чтения подстраивается под высоту страниц.`);
         this._statsInterval = setInterval(() => this._pushStats(), 1000);
@@ -52,6 +57,95 @@ class CardFarmer {
         while (Date.now() - t0 < timeout) {
             if (predicate()) return true;
             await sleep(100);
+        }
+        return false;
+    }
+
+    /**
+     * Принудительное переключение радио-кнопки. Сначала обычный клик по
+     * input (на реальном сайте работает даже для скрытого меню), затем клик
+     * по видимой зоне и, наконец, прямая установка checked + события
+     * input/change для v-model.
+     */
+    async _forceRadio(input) {
+        if (!input) return false;
+
+        input.click();
+        await sleep(300);
+        if (input.checked) return true;
+
+        const label = input.closest('label');
+        const visible = label ? label.querySelector('.radio-button__label') : null;
+        const target = visible || label || input;
+
+        target.dispatchEvent(new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            view: window
+        }));
+        await sleep(300);
+        if (input.checked) return true;
+
+        input.checked = true;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(300);
+
+        return input.checked;
+    }
+
+    /**
+     * Включает горизонтальный режим читалки. Достаточно переключить скрытое
+     * радио HORIZONTAL — Vue-модель применяет режим без открытия меню
+     * (проверено на реальном сайте). Открывать и закрывать меню не нужно.
+     */
+    async _ensureHorizontalMode() {
+        const horizontal = document.querySelector('input[type="radio"][value="HORIZONTAL"]');
+        if (!horizontal) {
+            this.log('Радио режима чтения не найдено — продолжаем в текущем режиме.');
+            return;
+        }
+
+        let switched = horizontal.checked;
+        if (!switched) {
+            for (let attempt = 0; attempt < 3 && !horizontal.checked; attempt++) {
+                if (await this._forceRadio(horizontal)) break;
+            }
+            switched = horizontal.checked;
+        }
+
+        if (switched) {
+            this.horizontalMode = true;
+            this.log('Режим чтения: горизонтальный.');
+            // Ждём перестроения читалки после смены режима.
+            await sleep(800 + Math.random() * 700);
+        } else {
+            this.log('Не удалось включить горизонтальный режим чтения — продолжаем в текущем.');
+        }
+    }
+
+    /**
+     * Чтение страницы в горизонтальном режиме: страница уже на экране,
+     * «читаем» её вертикально по экранам (как обычную страницу).
+     */
+    async _readPageHorizontal() {
+        await this._readPage(1);
+    }
+
+    /** Текущий номер страницы из панели навигации, либо null. */
+    _currentPageNumber() {
+        const el = document.querySelector('.nav-panel__page button span');
+        if (!el) return null;
+        const m = el.textContent.match(/(\d+)\s*\/\s*(\d+)/);
+        return m ? parseInt(m[1], 10) : null;
+    }
+
+    /** Ждёт, пока панель навигации покажет нужный номер страницы. */
+    async _waitForPageNumber(expected, timeout) {
+        const t0 = Date.now();
+        while (Date.now() - t0 < timeout) {
+            if (this._currentPageNumber() === expected) return true;
+            await sleep(200);
         }
         return false;
     }
@@ -161,6 +255,13 @@ class CardFarmer {
     }
 
     _clickNextPage() {
+        // В горизонтальном режиме страницы листаются зоной «Вперёд».
+        const zone = document.querySelector('.tap-zone__next');
+        if (zone && this._isVisible(zone)) {
+            zone.click();
+            return true;
+        }
+
         const arrows = document.querySelectorAll('.nav-panel__bar-arrow');
         const rightArrow = arrows[arrows.length - 1];
         if (rightArrow && !rightArrow.disabled && !rightArrow.classList.contains('button--disabled')) {
@@ -181,6 +282,15 @@ class CardFarmer {
             arrow.click();
             return true;
         }
+        // В горизонтальном режиме правая стрелка панели переключает главы.
+        if (this.horizontalMode) {
+            const arrows = document.querySelectorAll('.nav-panel__bar-arrow');
+            const rightArrow = arrows[arrows.length - 1];
+            if (rightArrow && !rightArrow.disabled && !rightArrow.classList.contains('button--disabled')) {
+                rightArrow.click();
+                return true;
+            }
+        }
         return false;
     }
 
@@ -200,34 +310,48 @@ class CardFarmer {
                 this.sessionStats.pagesChecked++;
                 this.log(`[Стр. ${page}/${totalPages}]`);
 
-                await this._readPage(page);
+                if (this.horizontalMode) {
+                    await this._readPageHorizontal();
+                } else {
+                    await this._readPage(page);
+                }
                 if (!this.isRunning) break;
 
                 const card = document.querySelector("img.cards-drop");
-                if (!card) {
-                    this.log(`  Карта не найдена`);
-                    continue;
-                }
+                if (card) {
+                    this.log(`  Нашёл! Клик...`);
+                    card.click();
 
-                this.log(`  Нашёл! Клик...`);
-                card.click();
+                    const modal = await this._waitForAny([".modal-container-drop", ".vfm__content.modal-drop"], 5000);
+                    if (modal) {
+                        // Человек осматривает карту: пауза тоже непостоянна.
+                        await sleep(1500 + Math.random() * 2500);
+                        await this._closeAnyModal();
+                        const closed = await this._waitForAnyClose(3000);
 
-                const modal = await this._waitForAny([".modal-container-drop", ".vfm__content.modal-drop"], 5000);
-                if (modal) {
-                    // Человек осматривает карту: пауза тоже непостоянна.
-                    await sleep(1500 + Math.random() * 2500);
-                    await this._closeAnyModal();
-                    const closed = await this._waitForAnyClose(3000);
-
-                    if (closed) {
-                        this.sessionStats.cardsCollected++;
-                        this.globalStats.totalCards++;
-                        this.log(`  Собрано! (+1 → ${this.sessionStats.cardsCollected})`);
+                        if (closed) {
+                            this.sessionStats.cardsCollected++;
+                            this.globalStats.totalCards++;
+                            this.log(`  Собрано! (+1 → ${this.sessionStats.cardsCollected})`);
+                        } else {
+                            this.log(`  Не удалось закрыть модалку`);
+                        }
                     } else {
-                        this.log(`  Не удалось закрыть модалку`);
+                        this.log(`  Модалка не появилась`);
                     }
                 } else {
-                    this.log(`  Модалка не появилась`);
+                    this.log(`  Карта не найдена`);
+                }
+
+                // В горизонтальном режиме страницы листаются стрелкой.
+                if (this.horizontalMode && page < totalPages && this.isRunning) {
+                    await sleep(300 + Math.random() * 600);
+                    if (!this._clickNextPage()) {
+                        this.log("Не удалось перейти на следующую страницу — стоп.");
+                        this.stop();
+                        break;
+                    }
+                    await this._waitForPageNumber(page + 1, 8000);
                 }
             }
 
