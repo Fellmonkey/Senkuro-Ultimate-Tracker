@@ -476,6 +476,153 @@ class CardFarmer {
 
 const cardFarmer = new CardFarmer();
 
+// ===== ЗАДАНИЯ =====
+
+async function getTasksViaApi(token) {
+    if (!window.SenkuroApi) {
+        return { error: 'SenkuroApi не загружен в контентный скрипт' };
+    }
+    try {
+        const options = {
+            fetchImpl: (url, opts) => fetch(url, { ...opts, credentials: 'include' })
+        };
+        if (token) options.token = token;
+        const tasks = await window.SenkuroApi.fetchTasks(options);
+        return { tasks };
+    } catch (error) {
+        return { error: error.message || String(error) };
+    }
+}
+
+function waitForSelector(selector, timeout) {
+    return new Promise((resolve) => {
+        const t0 = Date.now();
+        const timer = setInterval(() => {
+            const el = document.querySelector(selector);
+            if (el && el.offsetParent !== null || Date.now() - t0 > timeout) {
+                clearInterval(timer);
+                resolve(el && el.offsetParent !== null ? el : null);
+            }
+        }, 100);
+    });
+}
+
+function findBtnByText(text, { outsideModal = false } = {}) {
+    const match = typeof text === 'string' ? (t) => t === text : (t) => text.test(t);
+    return [...document.querySelectorAll('button')].find((b) => {
+        const t = (b.innerText || '').trim();
+        if (!match(t)) return false;
+        if (b.offsetParent === null) return false;
+        if (outsideModal && b.closest('.rating-modal')) return false;
+        return true;
+    }) || null;
+}
+
+function waitForButtonIn(root, text, timeout) {
+    return new Promise((resolve) => {
+        const t0 = Date.now();
+        const check = () => {
+            const btn = [...root.querySelectorAll('button')].find((b) =>
+                (b.innerText || '').trim() === text && !b.disabled
+            );
+            if (btn || Date.now() - t0 > timeout) resolve(btn || null);
+            else setTimeout(check, 100);
+        };
+        check();
+    });
+}
+
+function isMangaPage() {
+    return /^\/manga\//.test(window.location.pathname);
+}
+
+const BOOKMARK_STATUSES = ['Читаю', 'В планах', 'Прочитано', 'Любимое', 'Отложено', 'Брошено'];
+
+/**
+ * Цикл «добавить в закладки → удалить» с случайным статусом.
+ * Прогресс задания растёт, библиотека возвращается в исходное состояние.
+ */
+async function runBookmarkCycle(count) {
+    if (!isMangaPage()) return { ok: false, error: 'Откройте страницу манги' };
+    let done = 0;
+    for (let i = 0; i < count; i++) {
+        const add = findBtnByText('Добавить в список');
+        if (!add) break;
+        add.click();
+        await sleep(900);
+
+        const status = BOOKMARK_STATUSES[Math.floor(Math.random() * BOOKMARK_STATUSES.length)];
+        const statusBtn = findBtnByText(status);
+        if (!statusBtn) break;
+        statusBtn.click();
+        await sleep(1500);
+
+        const cur = findBtnByText(status);
+        if (!cur) break;
+        cur.click();
+        await sleep(900);
+
+        const remove = findBtnByText('Удалить из списка');
+        if (!remove) {
+            // Если пункта нет — закрываем меню и прерываем цикл.
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+            await sleep(800);
+            break;
+        }
+        remove.click();
+        await sleep(1800 + Math.random() * 1200);
+        done++;
+    }
+    return { ok: true, done };
+}
+
+/**
+ * Цикл «поставить оценку → снять голос» со случайным баллом.
+ */
+async function runRateCycle(count) {
+    if (!isMangaPage()) return { ok: false, error: 'Откройте страницу манги' };
+    let done = 0;
+    for (let i = 0; i < count; i++) {
+        // Открываем модалку оценки.
+        const openBtn = findBtnByText('Оценить', { outsideModal: true }) || findBtnByText(/^Оценка/, { outsideModal: true });
+        if (!openBtn) break;
+        openBtn.click();
+        const modal = await waitForSelector('.rating-modal', 5000);
+        if (!modal) break;
+
+        const icons = [...modal.querySelectorAll('.rating-modal__icon')];
+        if (!icons.length) break;
+        const star = icons[Math.floor(Math.random() * icons.length)];
+        star.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        await sleep(700);
+
+        const confirm = [...modal.querySelectorAll('button')].find((b) =>
+            (b.innerText || '').trim() === 'Оценить' && !b.disabled
+        );
+        if (!confirm) break;
+        confirm.click();
+
+        // Ждём закрытия модалки и обновления кнопки.
+        await sleep(2500);
+
+        // Снимаем голос.
+        const openAgain = findBtnByText(/^Оценка/, { outsideModal: true });
+        if (!openAgain) { done++; continue; }
+        openAgain.click();
+        const modal2 = await waitForSelector('.rating-modal', 5000);
+        if (!modal2) { done++; continue; }
+
+        const removeVote = await waitForButtonIn(modal2, 'Удалить голос', 3000);
+        if (removeVote) {
+            removeVote.click();
+            await sleep(1500);
+        }
+        await sleep(1800 + Math.random() * 1200);
+        done++;
+    }
+    return { ok: true, done };
+}
+
 async function syncViaApi(token) {
     if (!window.SenkuroApi) {
         return { error: 'SenkuroApi не загружен в контентный скрипт' };
@@ -495,6 +642,16 @@ async function syncViaApi(token) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "sync_via_api") {
         syncViaApi(request.token).then(sendResponse);
+        return true;
+    }
+    if (request.action === "get_tasks") {
+        getTasksViaApi(request.token).then(sendResponse);
+        return true;
+    }
+    if (request.action === "run_task") {
+        const count = Math.min(Math.max(Number(request.count) || 3, 1), 30);
+        const run = request.task === 'rate' ? runRateCycle(count) : runBookmarkCycle(count);
+        run.then(sendResponse);
         return true;
     }
     if (request.action === "start_farm") {

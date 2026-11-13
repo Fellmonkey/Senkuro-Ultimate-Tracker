@@ -15,6 +15,13 @@
 
     const VIEWER_QUERY = 'query viewer { viewer { user { id name } } }';
 
+    const TASKS_QUERY = `query userTasks($userId: ID!) {
+  userTasks(userId: $userId) {
+    progress
+    task { id type action slug active endAt experience points }
+  }
+}`;
+
     const BOOKMARKS_QUERY = `query userBookmarks($userId: ID!, $first: Int!, $after: String) {
   userBookmarks(subjectType: MANGA, userId: $userId, first: $first, after: $after) {
     totalCount
@@ -163,24 +170,33 @@
     }
 
     /**
-     * Забирает все закладки пользователя (курсорная пагинация до конца).
-     * Сначала пробует куки (credentials: 'include'), затем Authorization: Bearer
-     * из document.cookie — закладки могут жить в host-only куке.
-     * @returns {Promise<{data: Object, total: number, pages: number}>}
+     * Авторизация: пробуем куки (credentials: 'include'), затем Authorization:
+     * Bearer из document.cookie (host-only кука). Возвращает { opts, userId }.
      */
-    async function fetchBookmarks(options) {
-        let userId = extractUserId(await request(VIEWER_QUERY, {}, options));
+    async function authorize(options) {
+        let opts = options || {};
+        let userId = extractUserId(await request(VIEWER_QUERY, {}, opts));
 
         if (!userId) {
             const token = getAccessToken();
-            if (!token) {
-                throw new Error('Senkuro: нет авторизации — войдите на сайте senkuro.com');
+            if (token) {
+                opts = { ...opts, token };
+                userId = extractUserId(await request(VIEWER_QUERY, {}, opts));
             }
-            options = { ...options, token };
-            userId = extractUserId(await request(VIEWER_QUERY, {}, options));
-            if (!userId) {
-                throw new Error('Senkuro: нет авторизации — войдите на сайте senkuro.com');
-            }
+        }
+
+        return { opts, userId };
+    }
+
+    /**
+     * Забирает все закладки пользователя (курсорная пагинация до конца).
+     * @returns {Promise<{data: Object, total: number, pages: number}>}
+     */
+    async function fetchBookmarks(options) {
+        const { opts, userId } = await authorize(options);
+
+        if (!userId) {
+            throw new Error('Senkuro: нет авторизации — войдите на сайте senkuro.com');
         }
 
         const data = {};
@@ -189,7 +205,7 @@
         let pages = 0;
 
         do {
-            const result = await request(BOOKMARKS_QUERY, { userId, first: PAGE_SIZE, after }, options);
+            const result = await request(BOOKMARKS_QUERY, { userId, first: PAGE_SIZE, after }, opts);
             const connection = result.userBookmarks;
 
             if (!connection) {
@@ -211,5 +227,19 @@
         return { data, total, pages };
     }
 
-    root.SenkuroApi = { ENDPOINT, fetchBookmarks, normalizeBookmark };
+    /**
+     * Возвращает задания пользователя: [{ progress, task: { id, type, action, slug, active } }].
+     */
+    async function fetchTasks(options) {
+        const { opts, userId } = await authorize(options);
+
+        if (!userId) {
+            throw new Error('Senkuro: нет авторизации — войдите на сайте senkuro.com');
+        }
+
+        const result = await request(TASKS_QUERY, { userId }, opts);
+        return result.userTasks || [];
+    }
+
+    root.SenkuroApi = { ENDPOINT, fetchBookmarks, fetchTasks, normalizeBookmark };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

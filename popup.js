@@ -99,6 +99,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentTab === 'Статистика') {
             document.getElementById('view-stats').classList.add('active');
             renderStats();
+        } else if (currentTab === 'Задания') {
+            document.getElementById('view-tasks').classList.add('active');
+            refreshTasks();
         } else if (currentTab === 'Фарм') {
             document.getElementById('view-farm').classList.add('active');
             refreshFarmStats();
@@ -319,6 +322,198 @@ document.addEventListener('DOMContentLoaded', () => {
 
         document.getElementById('stats-grid').replaceChildren(fragment);
     }
+
+    // ===== ЗАДАНИЯ =====
+
+    const TASK_NAMES = {
+        'daily-visit': 'Заходить на сайт',
+        'weekly-visit': 'Заходить на сайт каждую неделю',
+        'monthly-visit': 'Заходить на сайт каждый месяц',
+        'completed-3-tasks': 'Выполнить 3 задания',
+        'completed-12-tasks': 'Выполнить 12 заданий',
+        'leave-3-comments': 'Оставить 3 комментария',
+        'receive-5-comment-upvote': 'Получить 5 лайков на комментарий',
+        'split-card': 'Разделить карту',
+        'merge-cards': 'Объединить карты',
+        'merge-cards-3-times': 'Объединить карты 3 раза',
+        'merge-cards-9-times': 'Объединить карты 9 раз',
+        'upgrade-cards': 'Улучшить карты',
+        'watch-18-anime-episodes': 'Посмотреть 18 эпизодов аниме',
+        'watch-84-anime-episodes': 'Посмотреть 84 эпизода аниме',
+        'rate-17-projects': 'Оценить 17 проектов',
+        'add-5-bookmarks': 'Добавить 5 закладок',
+        'add-20-bookmarks': 'Добавить 20 закладок',
+        'update-profile-avatar': 'Обновить аватар профиля',
+        'earn-2000-experience': 'Заработать 2000 опыта'
+    };
+
+    const TASK_TYPES = { DAILY: 'Ежедневное', WEEKLY: 'Еженедельное', MONTHLY: 'Ежемесячное' };
+
+    /** Цель задания: число из слага (напр. completed-3-tasks → 3). */
+    function taskTarget(slug) {
+        const m = String(slug || '').match(/(\d+)/);
+        return m ? Number(m[1]) : null;
+    }
+
+    /** Задания, которые можно автоматически выполнить (закладки, оценки). */
+    const AUTO_TASK_RE = /^(add-\d+-bookmarks|rate-\d+-projects)$/;
+
+    /** «Осталось времени» до дедлайна. */
+    function formatRemaining(iso) {
+        if (!iso) return null;
+        const end = new Date(iso).getTime();
+        if (!Number.isFinite(end)) return null;
+        const diff = end - Date.now();
+        if (diff <= 0) return 'время вышло';
+        const totalMin = Math.floor(diff / 60000);
+        if (totalMin < 60) return `${totalMin} мин`;
+        const hours = Math.floor(totalMin / 60);
+        if (hours < 24) return `${hours} ч ${totalMin % 60} мин`;
+        const days = Math.floor(hours / 24);
+        return `${days} д ${hours % 24} ч`;
+    }
+
+    function formatEndDate(iso) {
+        if (!iso) return null;
+        const d = new Date(iso);
+        if (!Number.isFinite(d.getTime())) return null;
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mi = String(d.getMinutes()).padStart(2, '0');
+        return `${dd}.${mm} ${hh}:${mi}`;
+    }
+
+    function taskTitle(task) {
+        const slug = task.slug || '';
+        return TASK_NAMES[slug] || slug.replace(/-/g, ' ');
+    }
+
+    function renderTasks(tasks) {
+        const list = document.getElementById('tasks-list');
+        const fragment = document.createDocumentFragment();
+
+        if (!tasks || !tasks.length) {
+            const empty = document.createElement('div');
+            empty.className = 'tasks-note';
+            empty.textContent = 'Задания не загрузились. Проверьте, что открыта страница Senkuro.';
+            fragment.append(empty);
+            list.replaceChildren(fragment);
+            return;
+        }
+
+        // Сортировка: сначала авто-задания, затем по ближайшему дедлайну.
+        const sorted = [...tasks].sort((a, b) => {
+            const aAuto = AUTO_TASK_RE.test(a.task.slug || '') ? 1 : 0;
+            const bAuto = AUTO_TASK_RE.test(b.task.slug || '') ? 1 : 0;
+            if (aAuto !== bAuto) return bAuto - aAuto;
+            const ta = new Date(a.task.endAt || 0).getTime() || 0;
+            const tb = new Date(b.task.endAt || 0).getTime() || 0;
+            return ta - tb;
+        });
+
+        for (const item of sorted) {
+            const task = item.task || {};
+            const target = taskTarget(task.slug);
+            const progress = Number(item.progress) || 0;
+            const done = target !== null && progress >= target;
+
+            const card = document.createElement('div');
+            card.className = 'task-item';
+            const typeClass = String(task.type || '').toLowerCase();
+            if (typeClass === 'daily' || typeClass === 'weekly' || typeClass === 'monthly') {
+                card.classList.add(`task-item--${typeClass}`);
+            }
+
+            const title = document.createElement('div');
+            title.className = 'task-title';
+            title.textContent = taskTitle(task);
+
+            const meta = document.createElement('div');
+            meta.className = 'task-meta';
+            const remaining = formatRemaining(task.endAt);
+            const endDate = formatEndDate(task.endAt);
+            meta.textContent = `${TASK_TYPES[task.type] || task.type || ''} • ${task.slug}`;
+            if (endDate) {
+                meta.textContent += ` • До ${endDate} (осталось: ${remaining || '—'})`;
+            }
+
+            const progressLine = document.createElement('div');
+            progressLine.className = 'task-progress';
+            progressLine.textContent = `Прогресс: ${progress}${target !== null ? ` / ${target}` : ''}`;
+
+            const bar = document.createElement('div');
+            bar.className = 'task-bar';
+            const fill = document.createElement('div');
+            fill.className = 'task-bar-fill';
+            fill.style.width = target && target > 0 ? `${Math.min(100, Math.round((progress / target) * 100))}%` : '0%';
+            bar.append(fill);
+
+            const rewards = document.createElement('div');
+            rewards.className = 'task-meta';
+            const parts = [];
+            if (task.experience) parts.push(`⚡ ${task.experience} опыта`);
+            if (task.points) parts.push(`🪙 ${task.points} очков`);
+            rewards.textContent = parts.join(' • ') || '';
+
+            const status = document.createElement('span');
+            status.className = `task-status ${done ? 'task-status-ok' : 'task-status-active'}`;
+            status.textContent = done ? '✓ Готово' : (task.active === false ? 'Неактивно' : 'Активно');
+
+            card.append(title, meta, progressLine, bar, rewards, status);
+            fragment.append(card);
+        }
+
+        list.replaceChildren(fragment);
+    }
+
+    function refreshTasks() {
+        const load = (token) => sendToTab({ action: 'get_tasks', token }).then((res) => {
+            if (res && res.error && /нет авторизации/i.test(res.error)) {
+                // Повторяем с токеном из chrome.cookies (как в синхронизации).
+                return getAccessTokenFromCookies().then((t) => (t ? sendToTab({ action: 'get_tasks', token: t }) : res));
+            }
+            return res;
+        });
+
+        load().then((res) => {
+            const list = document.getElementById('tasks-list');
+            if (res && res.tasks) {
+                renderTasks(res.tasks);
+            } else {
+                list.replaceChildren();
+                const err = document.createElement('div');
+                err.className = 'tasks-error';
+                err.textContent = res && res.error ? `Ошибка: ${res.error}` : 'Нет ответа от страницы.';
+                list.append(err);
+            }
+        });
+    }
+
+    function runTask(kind) {
+        const btn = kind === 'rate' ? document.getElementById('tasks-run-rate') : document.getElementById('tasks-run-bookmark');
+        const note = document.getElementById('tasks-note');
+
+        const rawCount = Number.parseInt(document.getElementById('tasks-count').value, 10);
+        const count = Math.min(30, Math.max(1, Number.isFinite(rawCount) ? rawCount : 1));
+
+        btn.disabled = true;
+        note.textContent = `Выполняется на открытой странице манги… (циклов: ${count}, без влияния на библиотеку).`;
+
+        sendToTab({ action: 'run_task', task: kind, count }).then((res) => {
+            btn.disabled = false;
+            if (res && res.ok) {
+                note.textContent = `Выполнено циклов: ${res.done}. Прогресс обновляется с задержкой — нажмите «Обновить» позже.`;
+            } else {
+                note.textContent = res && res.error ? `Ошибка: ${res.error}` : 'Не удалось выполнить.';
+            }
+            refreshTasks();
+        });
+    }
+
+    document.getElementById('tasks-refresh').addEventListener('click', refreshTasks);
+    document.getElementById('tasks-run-bookmark').addEventListener('click', () => runTask('bookmark'));
+    document.getElementById('tasks-run-rate').addEventListener('click', () => runTask('rate'));
 
     function showModalView(viewId) {
         document.querySelectorAll('.modal-view').forEach((view) => view.classList.remove('active'));
